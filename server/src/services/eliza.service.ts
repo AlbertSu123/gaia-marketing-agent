@@ -626,25 +626,27 @@ export class ElizaService extends BaseService {
 
   public async start(): Promise<void> {
     try {
-      // make sure this gets initialized before anything tries to use it in the plugin.
-      // not sure where this should actually be hooked up
+      // Initialize required services
       await StorageService.getInstance().start();
-
-      // Initialize Twitter service
       await this.twitterService.start();
 
-      // Set up periodic bounty checking
-      setInterval(() => {
-        this.handleBounties();
-      }, 1800000); // Check every 30 minutes
-    } catch (err) {
-      elizaLogger.warn("[eliza] gated storage service is unavailable");
-    }
-    try {
-      //register AI based command handlers here
-      this.bot.command("eliza", (ctx) =>
-        this.messageManager.handleMessage(ctx)
-      );
+      // Set up periodic bounty checking with random interval to avoid predictable patterns
+      const scheduleNextCheck = () => {
+        const randomDelay = Math.floor(Math.random() * (35 - 25 + 1) + 25) * 60 * 1000; // 25-35 minutes
+        setTimeout(async () => {
+          await this.handleBounties();
+          scheduleNextCheck();
+        }, randomDelay);
+      };
+
+      // Initial check after startup
+      setTimeout(async () => {
+        await this.handleBounties();
+        scheduleNextCheck();
+      }, 60000); // Start first check after 1 minute
+
+      // Register message handlers
+      this.bot.command("eliza", (ctx) => this.messageManager.handleMessage(ctx));
       elizaLogger.info("Eliza service started successfully");
     } catch (error) {
       console.error("Failed to start Eliza service:", error);
@@ -667,22 +669,41 @@ export class ElizaService extends BaseService {
 
   public async handleBounties(): Promise<void> {
     try {
-      const bounties = await this.bountyService.fetchAvailableBounties();
+      // Only fetch unposted bounties
+      const bounties = await this.bountyService.getUnpostedBounties();
 
       for (const bounty of bounties) {
-        // Generate a tweet for the bounty
-        const message = await this._generateBountyTweet(bounty);
+        try {
+          // Generate tweet content using the agent's personality
+          const tweetContent = await this._generateBountyTweet(bounty);
 
-        if (message) {
+          if (!tweetContent) {
+            console.error(`Failed to generate tweet for bounty ${bounty.id}`);
+            continue;
+          }
+
           // Post the tweet
-          const tweetResponse = await this.twitterService.postTweet(message);
+          const tweetResponse = await this.twitterService.postTweet(tweetContent);
 
           if (tweetResponse?.id) {
             // Update the bounty with the tweet ID
-            await this.bountyService.updateBounty(bounty.id, {
-              tweetId: tweetResponse.id
+            const updated = await this.bountyService.updateBounty(bounty.id, {
+              tweetId: tweetResponse.id,
+              status: 'posted'
             });
+
+            if (updated) {
+              console.log(`Successfully posted bounty ${bounty.id} as tweet ${tweetResponse.id}`);
+            } else {
+              console.error(`Failed to update bounty ${bounty.id} with tweet ID ${tweetResponse.id}`);
+            }
           }
+
+          // Add delay between tweets to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second delay
+        } catch (error) {
+          console.error(`Error processing bounty ${bounty.id}:`, error);
+          continue;
         }
       }
     } catch (error) {
@@ -692,21 +713,51 @@ export class ElizaService extends BaseService {
 
   private async _generateBountyTweet(bounty: any): Promise<string | null> {
     try {
-      const prompt = `Create an engaging tweet about this bounty:
+      // Create a context for the tweet generation
+      const context = composeContext({
+        state: await this.runtime.composeState(null),
+        template: `# Task: Generate an engaging tweet about a bounty opportunity
+About the bounty:
 Title: ${bounty.title}
 Description: ${bounty.description}
-Value: ${bounty.value}
+Value: ${bounty.value} ${bounty.tags ? '\nTags: ' + bounty.tags.join(', ') : ''}
+${bounty.requirements ? '\nRequirements: ' + bounty.requirements : ''}
+${bounty.deadline ? '\nDeadline: ' + new Date(bounty.deadline).toLocaleDateString() : ''}
 
-The tweet should be concise, engaging, and include relevant hashtags. Make it appealing to potential contributors.`;
+Guidelines:
+1. Write in the voice and style of ${this.runtime.character.name}
+2. Keep it concise (max 280 characters)
+3. Make it engaging and appealing to potential contributors
+4. Include relevant hashtags
+5. Mention the reward/value
+6. Create urgency if there's a deadline
 
-      const response = await this.runtime.llm.complete({
-        prompt,
-        maxTokens: 100,
-        temperature: 0.7,
-        stopSequences: ["\n"]
+Previous successful bounty tweets:
+- "🚀 Exciting opportunity! Build a React component library and earn 500 USDC! #WebDev #Bounty"
+- "🔥 Smart contract audit needed - 1000 USDC reward for finding vulnerabilities! #Security #Web3"
+- "⚡️ Quick task: Design a landing page mockup (2 ETH reward!) Deadline: Friday #Design #UI"
+
+Generate a tweet for this bounty:`,
       });
 
-      return response.text;
+      // Generate the tweet content
+      const response = await generateMessageResponse({
+        runtime: this.runtime,
+        context,
+        modelClass: ModelClass.MEDIUM,
+      });
+
+      if (!response || !response.text) {
+        return null;
+      }
+
+      // Clean up the response and ensure it's within Twitter's character limit
+      let tweet = response.text.trim();
+      if (tweet.length > 280) {
+        tweet = tweet.substring(0, 277) + "...";
+      }
+
+      return tweet;
     } catch (error) {
       console.error('Error generating bounty tweet:', error);
       return null;
