@@ -29,16 +29,31 @@ pnpm install
 cp .env.example .env
 ```
 
+4. Run the environment validator:
+```bash
+pnpm run validate-env
+```
+
 ## Configuration
 
 ### Required Environment Variables
 
 - `API_BASE_URL`: URL of your bounty API service
 - `TELEGRAM_BOT_TOKEN`: Your Telegram bot token (from @BotFather)
+- `TELEGRAM_BOT_NAME`: Your bot's username without @ symbol
 - `OPENAI_API_KEY`: Your OpenAI API key for fallback
 - `GAIANET_MODEL`: The Gaia model to use (default: llama)
 - `GAIANET_SERVER_URL`: Gaia model server URL
-- `ELIZA_CHARACTER_PATH`: Path to your agent's personality configuration
+- `ELIZA_CHARACTER_PATH`: Path to your agent's personality configuration (default: marketing-agent.json)
+
+### Optional Environment Variables
+
+- `GAIANET_EMBEDDING_MODEL`: Model for embeddings (default: nomic-embed)
+- `USE_GAIANET_EMBEDDING`: Enable Gaia embeddings (default: TRUE)
+- `BOUNTY_FETCH_INTERVAL`: Time between bounty checks in ms (default: 1800000)
+- `TWEET_DELAY`: Delay between tweets in ms (default: 30000)
+- `LOG_LEVEL`: Logging level (default: info)
+- `VERBOSE_LOGGING`: Enable detailed logs (default: true)
 
 ### Twitter Setup
 
@@ -49,6 +64,35 @@ pnpm login-x
 
 2. Follow the prompts to authenticate with Twitter
 3. The script will save your credentials to `twitter-cookies.json`
+
+### Character Configuration
+
+The agent uses a custom character configuration (`marketing-agent.json`) that defines its personality and behavior. You can customize this by:
+
+1. Copying the default configuration:
+```bash
+cp marketing-agent.json custom-agent.json
+```
+
+2. Modifying the configuration:
+```json
+{
+  "name": "YourAgentName",
+  "modelProvider": "gaianet",
+  "bio": [
+    "Your agent's characteristics..."
+  ],
+  "templates": {
+    "messageHandlerTemplate": "Your custom template...",
+    "shouldRespondTemplate": "Your response rules..."
+  }
+}
+```
+
+3. Updating your `.env`:
+```bash
+ELIZA_CHARACTER_PATH=custom-agent.json
+```
 
 ## Usage
 
@@ -139,6 +183,30 @@ pnpm run dev
 - Tweet generation
 - Posting status
 - Error messages
+
+### Troubleshooting
+
+Common issues and solutions:
+
+1. **Twitter Authentication Failed**
+   - Run `pnpm login-x` again
+   - Check `twitter-cookies.json` exists
+   - Verify Twitter account status
+
+2. **Bounty Fetching Issues**
+   - Verify `API_BASE_URL` is correct
+   - Check API service is running
+   - Monitor rate limiting logs
+
+3. **Tweet Generation Problems**
+   - Verify Gaia model configuration
+   - Check OpenAI fallback configuration
+   - Review character template format
+
+4. **Rate Limiting**
+   - Adjust `BOUNTY_FETCH_INTERVAL`
+   - Modify `TWEET_DELAY`
+   - Monitor Twitter API limits
 
 ## Contributing
 
